@@ -1,0 +1,111 @@
+# Battery Telemetry Prediction Pipeline
+
+본 프로젝트는 BMS(배터리 관리 시스템) 데이터를 기반으로 **SOC(State of Charge)**, **팩 가용 출력(Pack Available Power)**, **온도 시퀀스(High/Avg/Low)**를 다중 회귀로 예측하는 머신러닝 파이프라인입니다.  
+**TCN / LSTM / Transformer** 백본을 선택적으로 사용할 수 있으며, 전처리 → 라벨 생성 → 학습 → 평가 → 추론의 전 과정을 자동화합니다.
+
+---
+
+## 📂 프로젝트 구조
+src/
+ ├─ preprocess.py       # 전처리 (Raw CSV → merged_clean.csv)
+ ├─ labels.py           # 라벨 생성 (NPZ)
+ ├─ train.py            # 학습
+ ├─ evaluate.py         # 상세 평가
+ ├─ infer.py            # 간이 추론
+ └─ models/             # 모델 아키텍처
+     ├─ tcn.py
+     ├─ lstm.py
+     ├─ transformer.py
+     ├─ heads.py
+     ├─ registry.py
+     └─ __init__.py
+
+---
+
+## ⚙️ 주요 기능
+- **전처리**
+  - 시간 파싱, 고정 간격 리샘플, 전력/온도 집계
+  - 이상치 제거(EWMA+robust z-score)
+  - Yeo–Johnson 변환, 차분, 스케일링
+- **라벨 생성**
+  - SOC, Temp 시퀀스
+  - 셀 가용 출력(P_cell): R0–SOC 보간 + 온도 보정 + 열허용치 반영
+- **학습**
+  - 다중태스크 손실: SOC + Temp(3ch) + P_cell
+  - AMP 지원, 체크포인트 저장
+- **상세 평가**
+  - MAE/RMSE/R²/MAPE, 상관계수, KS-test
+  - per-horizon / 세션별 / 조건별 breakdown
+  - 시각화 플롯 저장
+- **간이 추론**
+  - 예측·실제 비교 CSV, MAE 요약
+  - 팩 출력 환산, 지속가능 출력 캡(옵션)
+
+---
+
+## 📦 설치
+git clone <repo_url>
+cd <repo_dir>
+pip install -r requirements.txt
+
+---
+
+## 🚀 실행 순서
+
+### 1. 전처리
+python -m src.preprocess --config config.yaml
+- 입력: data/raw/*.csv (BMS 데이터, Time 컬럼 필수)
+- 출력: data/interim/merged_clean.csv, artifacts/scalers/input_*.pkl
+
+### 2. 라벨 생성
+python -m src.labels --config config.yaml
+- 출력: data/processed/dataset_windows_labels.npz
+
+### 3. 학습
+python -m src.train --config config.yaml --model_name tcn
+- model_name: tcn | lstm | transformer
+- 출력: artifacts/<model>/models/multitask_<model>_cellkW.pt
+
+### 4. 상세 평가
+python -m src.evaluate --config config.yaml --model_name tcn --split val
+- split: train | val | test
+- 출력: artifacts/<model>/<split>/metrics_ext.json, per_horizon_mae.csv, 플롯 이미지
+
+### 5. 간이 추론
+python -m src.infer --config config.yaml --model_name tcn --split val   --d_rem_km 10 --v_avg_kmh 50 --sprint 1.2 --eta_pack 0.95 --safety_factor 0.9
+- 출력: preds_<split>.csv, mae_summary_<split>.json
+
+---
+
+## 📊 모델 구조
+- **백본**
+  - TCN: Dilated causal Conv1d 기반
+  - LSTM: 순방향 LSTM
+  - Transformer: Positional Encoding + Encoder Layer
+- **헤드(MultiTaskHeads)**
+  - SOC / P_cell: 전역 피처
+  - Temp: 시퀀스 피처(High/Avg/Low)
+
+---
+
+## 🗂 config.yaml 예시
+data:
+  raw_dir: data/raw
+  interim_dir: data/interim
+  processed_dir: data/processed
+  r0_soc_file: data/raw/R0_SOC.csv
+  sessions_train: ["2024A", "2024B"]
+  sessions_val: ["2024C"]
+
+window:
+  dt: 0.25
+  past_seconds: 15
+  horizon_seconds: 5
+
+pack:
+  Ns: 14
+  Np: 1
+  V_nom_cell: 3.7
+  V_min_cell: 3.0
+  E_pack_kWh: 5.0
+  P_loss_max_cell: 5.0

@@ -1,0 +1,85 @@
+data:
+  raw_dir: "data/raw"
+  interim_dir: "data/interim"
+  processed_dir: "data/processed"
+  sessions_train: ["6080", "7070", "6060", "7090", "7080", "7060"]
+  sessions_val:   ["6090"]
+  sessions_test:  ["6070", "70100"]
+
+  # R0–SOC 테이블 파일 경로 (labels.py에서 사용)
+  r0_soc_file: "data/raw/20250808_R0_SOC_charge_discharge.csv"
+
+window:
+  dt: 0.25                # 4Hz
+  past_seconds: 30.0      # 입력 구간 30초
+  horizon_seconds: 30.0   # 예측 구간 30초
+
+preprocess:
+  outlier:
+    enabled: true
+    alpha: 0.2
+    z_thresh: 3.5
+  transform:
+    yeo_johnson_cols: ["Current", "Power"]
+    diff_cols: ["Current", "Power"]
+  scaling:
+    type: "robust"
+    save_path: "artifacts/scalers/input_robust.pkl"
+
+# 개별 모델 하이퍼파라미터(변경 없음)
+model:
+  tcn:
+    num_channels: [64, 64, 64]
+    kernel_size: 3
+    dropout: 0.2
+    lr: 0.001
+    batch_size: 64
+    epochs: 50
+  lstm:
+    hidden_size: 128
+    num_layers: 2
+    dropout: 0.2
+    lr: 0.001
+    batch_size: 64
+    epochs: 50
+  transformer:
+    d_model: 128
+    nhead: 4
+    num_encoder_layers: 3
+    dim_feedforward: 256
+    dropout: 0.1
+    lr: 0.001
+    batch_size: 64
+    epochs: 50
+
+# 학습 공통 설정(변경 없음)
+train:
+  device: "cuda"          # "cpu"로 강제 가능
+  batch_size: 64
+  lr: 1e-4
+  epochs: 50
+  loss_weight:
+    soc: 1.0
+    temp: 0.33            # (High/Avg/Low MAE합과 곱해짐)
+    pavail: 1.0
+  use_amp: false
+  num_workers: 0
+  pin_memory: true
+
+pack:
+  Ns: 14                  # 학습(실험) 팩 직렬 셀 수: 14s1p
+  Np: 1                   # 병렬 셀 수
+  V_nom_cell: 3.7         # [V] 셀 공칭 전압
+  V_min_cell: 3.0         # [V] 셀 최소 전압
+  P_loss_max_cell: 10.0   # [W] GRPA580140 (81A 연속) & R0≈1.5mΩ 기준
+  C_nom_cell_Ah: 13.5     # [Ah] GRPA580140 정격 용량
+
+sop:
+  temp_r0:
+    k_low: 0.03     # T<25°C에서 1°C 낮아질 때 R0 증가율 (~3%/°C)
+    k_high: 0.005   # T>25°C에서 1°C 높아질 때 R0 증가율 (~0.5%/°C)
+  ploss_temp_curve:
+    - [10, 0.6]
+    - [25, 1.0]
+    - [35, 0.8]
+    - [45, 0.5]

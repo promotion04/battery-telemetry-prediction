@@ -1,0 +1,8 @@
+﻿.venv/
+__pycache__/
+artifacts/
+data/interim/
+data/processed/
+*.pt
+*.onnx
+.DS_Store
